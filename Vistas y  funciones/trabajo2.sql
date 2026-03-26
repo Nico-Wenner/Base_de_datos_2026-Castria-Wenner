@@ -199,7 +199,7 @@ insert  into `products`(`productCode`,`productName`,`productLine`,`productScale`
 /*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Ejercicios variables
+-- Ejercicios vistas
 -- 6)
 create view sin_pagar as select c.customerNumber from customers c left join payments p on 
 c.customerNumber=p.customerNumber where p.customerNumber = null;
@@ -271,6 +271,20 @@ begin
 end $$
 delimiter ;
 
+-- 4
+delimiter $$
+create function productos (linea varchar(50))
+returns int deterministic
+begin
+	declare cantidad int;
+    
+    select count(*) into cantidad from products
+    where linea=productLine;
+    
+    return cantidad;
+end $$
+delimiter ;
+
 -- 7)
 delimiter $$
 create function beneficio (numero int, codigo varchar(50))
@@ -278,7 +292,7 @@ returns float deterministic
 begin
 	declare precio float;
     
-    select (od.priceEach-p.buyPrice) as beneficio into precio from
+    select (od.quantityOrdered*od.priceEach-od.quantityOrdered*p.buyPrice) as beneficio into precio from
     orderdetails od
     join products p on od.productCode=p.productCode
     where od.orderNumber=numero
