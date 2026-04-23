@@ -98,3 +98,207 @@ begin
     close nombreCursor;
 end //
 delimiter ;
+
+-- 13
+ALTER TABLE employees ADD COLUMN comision DECIMAL(10,2) DEFAULT 0;
+SET SQL_SAFE_UPDATES = 0;
+delimiter $$
+create procedure actualizarcomision()
+begin
+    declare done int default 0;
+    declare v_employeenumber int;
+    declare v_totalventas decimal(15,2);
+    declare cur_empleados cursor for
+        select employeenumber from employees;
+    declare continue handler for not found set done = 1;
+    open cur_empleados;
+    read_loop: loop
+        fetch cur_empleados into v_employeenumber;
+        if done then
+            leave read_loop;
+        end if;
+        select ifnull(sum(od.quantityordered * od.priceeach), 0)
+        into v_totalventas
+        from customers c
+        join orders o on c.customernumber = o.customernumber
+        join orderdetails od on o.ordernumber = od.ordernumber
+        where c.salesrepemployeenumber = v_employeenumber;
+        update employees
+        set comision =
+            case
+                when v_totalventas > 100000 then v_totalventas * 0.05
+                when v_totalventas between 50000 and 100000 then v_totalventas * 0.03
+                else 0
+            end
+        where employeenumber = v_employeenumber;
+    end loop;
+    close cur_empleados;
+end $$
+delimiter ;
+
+-- 14
+delimiter $$
+create procedure asignarempleados()
+begin
+    declare done int default 0;
+    declare v_customernumber int;
+    declare v_empleado int;
+    declare cur_clientes cursor for
+        select customernumber
+        from customers
+        where salesrepemployeenumber is null;
+    declare continue handler for not found set done = 1;
+    open cur_clientes;
+    read_loop: loop
+        fetch cur_clientes into v_customernumber;
+        if done then
+            leave read_loop;
+        end if;
+        select employeenumber
+        into v_empleado
+        from (
+            select e.employeenumber, count(c.customernumber) as total
+            from employees e
+            left join customers c 
+                on e.employeenumber = c.salesrepemployeenumber
+            group by e.employeenumber
+            order by total asc
+            limit 1
+        ) as sub;
+        update customers
+        set salesrepemployeenumber = v_empleado
+        where customernumber = v_customernumber;
+    end loop;
+    close cur_clientes;
+end $$
+delimiter ;
+
+create table reporte_ventas (
+	numeroOrden int,
+    nombreCliente varchar(45),
+    pais varchar(45),
+    totalGastado float,
+    cantItems int,
+    estado varchar(45),
+    diasParaEntrega int
+);
+
+delimiter $$
+create procedure generar_reporte()
+begin
+	declare sinFilas int default 0;
+    declare v_numeroorden int;
+    declare v_nombrecliente varchar(45);
+    declare v_pais varchar(45);
+    declare v_totalgastado float;
+    declare v_cantitems int;
+    declare v_estado varchar(45);
+    declare v_diasparaentrega int;
+    declare cur_ordenes cursor for
+        select o.ordernumber, c.customername, c.country, o.status, 
+        datediff(o.shippeddate, o.orderdate) as diasentrega from orders o
+        join customers c on o.customernumber = c.customernumber;
+    declare continue handler for not found set sinFilas = 1;
+
+    open cur_ordenes;
+    bucle : loop
+        fetch cur_ordenes into 
+            v_numeroorden, 
+            v_nombrecliente, 
+            v_pais, 
+            v_estado, 
+            v_diasparaentrega;
+
+        if sinFilas then
+            leave bucle;
+        end if;
+
+        select sum(od.quantityordered * od.priceeach)
+        into v_totalgastado
+        from orderdetails od
+        where od.ordernumber = v_numeroorden;
+
+        select sum(od.quantityordered)
+        into v_cantitems
+        from orderdetails od
+        where od.ordernumber = v_numeroorden;
+
+        insert into reporte_ventas (numeroorden, nombrecliente, pais, totalgastado, cantitems, estado,
+        diasparaentrega)
+        values (v_numeroorden, v_nombrecliente, v_pais, v_totalgastado, v_cantitems, v_estado, 
+        v_diasparaentrega);
+    end loop;
+    close cur_ordenes;
+end $$
+delimiter ;
+
+delimiter $$
+
+create procedure insertar_ordenes_masivas()
+begin
+    declare i int default 0;
+    declare v_ordernumber int;
+    declare v_customernumber int;
+
+    -- base inicial
+    select ifnull(max(ordernumber), 0) + 1 into v_ordernumber from orders;
+
+    while i < 3000 do
+
+        -- cliente random
+        select customernumber into v_customernumber
+        from customers
+        order by rand()
+        limit 1;
+
+        -- insertar orden
+        insert into orders (
+            ordernumber,
+            orderdate,
+            requireddate,
+            shippeddate,
+            status,
+            comments,
+            customernumber
+        ) values (
+            v_ordernumber,
+            curdate(),
+            date_add(curdate(), interval 7 day),
+            date_add(curdate(), interval 2 day),
+            'shipped',
+            'orden generada automaticamente',
+            v_customernumber
+        );
+
+        -- insertar 3 productos distintos (sin variables @)
+        insert into orderdetails (
+            ordernumber,
+            productcode,
+            quantityordered,
+            priceeach,
+            orderlinenumber
+        )
+        select 
+            v_ordernumber,
+            p.productcode,
+            floor(1 + rand() * 10),
+            p.buyprice,
+            row_number() over () as orderlinenumber
+        from (
+            select productcode, buyprice
+            from products
+            order by rand()
+            limit 3
+        ) p;
+
+        -- incrementar id
+        set v_ordernumber = v_ordernumber + 1;
+        set i = i + 1;
+
+    end while;
+
+end$$
+
+delimiter ;
+
+delete from reporte_ventas;
